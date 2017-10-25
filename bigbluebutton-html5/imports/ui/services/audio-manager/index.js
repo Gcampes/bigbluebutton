@@ -74,7 +74,6 @@ class AudioManager {
     const callOptions = {
       isListenOnly: this.isListenOnly,
       extension: isEchoTest ? ECHO_TEST_NUMBER : null,
-      inputStream: this.isListenOnly ? this.createListenOnlyStream() : this.inputStream,
     };
 
     return this.bridge.joinAudio(callOptions, this.callStateCallback.bind(this));
@@ -152,21 +151,9 @@ class AudioManager {
     });
   }
 
-  createListenOnlyStream() {
-    if (this.listenOnlyAudioContext) {
-      this.listenOnlyAudioContext.close();
-    }
-
-    this.listenOnlyAudioContext = window.AudioContext ?
-                                  new window.AudioContext() :
-                                  new window.webkitAudioContext();
-
-    return this.listenOnlyAudioContext.createMediaStreamDestination().stream;
-  }
-
   async changeInputDevice(deviceId) {
     try {
-      this.inputDevice = await this.bridge.changeInputDevice(deviceId);
+      this.inputDeviceId = await this.bridge.changeInputDevice(deviceId);
     } catch(err) {
       this.error = err;
       this.notify('There was a problem getting the media devices');
@@ -177,13 +164,9 @@ class AudioManager {
     this.outputDeviceId = await this.bridge.changeOutputDevice(deviceId);
   }
 
-  set inputDevice(value) {
-    Object.assign(this._inputDevice, value);
+  set inputDeviceId(value) {
+    this._inputDevice.id = value;
     this._inputDevice.tracker.changed();
-  }
-
-  get inputStream() {
-    return this._inputDevice.stream;
   }
 
   get inputDeviceId() {

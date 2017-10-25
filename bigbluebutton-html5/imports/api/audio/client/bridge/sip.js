@@ -3,53 +3,12 @@ import { Tracker } from 'meteor/tracker';
 import BaseAudioBridge from './base';
 
 const MEDIA = Meteor.settings.public.media;
-const STUN_TURN_FETCH_URL = MEDIA.stunTurnServersFetchAddress;
-const MEDIA_TAG = MEDIA.mediaTag;
 const CALL_TRANSFER_TIMEOUT = MEDIA.callTransferTimeout;
-
-const fetchStunTurnServers = sessionToken =>
-  new Promise(async (resolve, reject) => {
-    const handleStunTurnResponse = ({ stunServers, turnServers }) => {
-      if (!stunServers && !turnServers) {
-        return { error: 404, stun: [], turn: [] };
-      }
-      return {
-        stun: stunServers.map(server => server.url),
-        turn: turnServers.map(server => server.url),
-      };
-    };
-
-    const url = `${STUN_TURN_FETCH_URL}?sessionToken=${sessionToken}`;
-    const response = await fetch(url)
-      .then(res => res.json())
-      .then(handleStunTurnResponse);
-
-    if (response.error) return reject('Could not fetch the stuns/turns servers!');
-    return resolve(response);
-  });
 
 export default class SIPBridge extends BaseAudioBridge {
   constructor(userData) {
     super(userData);
 
-    const {
-      userId,
-      username,
-      sessionToken,
-    } = userData;
-
-    this.user = {
-      userId,
-      sessionToken,
-      name: username,
-    };
-
-    this.media = {
-      inputDevice: {},
-    };
-
-    this.protocol = window.document.location.protocol;
-    this.hostname = window.document.location.hostname;
     const causes = window.SIP.C.causes;
     this.errorCodes = {
       [causes.REQUEST_TIMEOUT]: this.baseErrorCodes.REQUEST_TIMEOUT,
@@ -58,7 +17,7 @@ export default class SIPBridge extends BaseAudioBridge {
     };
   }
 
-  joinAudio({ isListenOnly, extension, inputStream }, managerCallback) {
+  joinAudio({ isListenOnly, extension }, managerCallback) {
     return new Promise((resolve, reject) => {
       const callExtension = extension ? `${extension}${this.userData.voiceBridge}` : this.userData.voiceBridge;
 
@@ -68,7 +27,7 @@ export default class SIPBridge extends BaseAudioBridge {
 
       this.callback = callback;
 
-      return this.doCall({ callExtension, isListenOnly, inputStream }, callback)
+      return this.doCall({ callExtension, isListenOnly }, callback)
                  .catch((reason) => {
                    callback({
                      status: this.baseCallStates.failed,
@@ -100,7 +59,7 @@ export default class SIPBridge extends BaseAudioBridge {
     this.user.callerIdName = callerIdName;
     this.callOptions = options;
 
-    return fetchStunTurnServers(sessionToken)
+    return this.fetchStunTurnServers(sessionToken)
                         .then(this.createUserAgent.bind(this))
                         .then(this.inviteUserAgent.bind(this))
                         .then(this.setupEventHandlers.bind(this));
@@ -204,12 +163,17 @@ export default class SIPBridge extends BaseAudioBridge {
   inviteUserAgent(userAgent) {
     const {
       hostname,
+      media,
     } = this;
 
     const {
-      inputStream,
+      isListenOnly,
       callExtension,
     } = this.callOptions;
+
+    const inputStream = isListenOnly ?
+                        this.createListenOnlyStream() :
+                        media.inputDevice.stream;
 
     const options = {
       media: {
@@ -219,7 +183,7 @@ export default class SIPBridge extends BaseAudioBridge {
           video: false,
         },
         render: {
-          remote: document.querySelector(MEDIA_TAG),
+          remote: document.querySelector(this.mediaTag),
         },
       },
       RTCConstraints: {
@@ -231,6 +195,18 @@ export default class SIPBridge extends BaseAudioBridge {
     };
 
     return userAgent.invite(`sip:${callExtension}@${hostname}`, options);
+  }
+
+  createListenOnlyStream() {
+    if (this.listenOnlyAudioContext) {
+      this.listenOnlyAudioContext.close();
+    }
+
+    this.listenOnlyAudioContext = window.AudioContext ?
+                                  new window.AudioContext() :
+                                  new window.webkitAudioContext();
+
+    return this.listenOnlyAudioContext.createMediaStreamDestination().stream;
   }
 
   setupEventHandlers(currentSession) {
@@ -320,11 +296,11 @@ export default class SIPBridge extends BaseAudioBridge {
     media.inputDevice.source.connect(media.inputDevice.scriptProcessor);
     media.inputDevice.scriptProcessor.connect(media.inputDevice.audioContext.destination);
 
-    return this.media.inputDevice;
+    return this.media.inputDevice.id;
   }
 
   changeOutputDevice(value) {
-    const audioContext = document.querySelector(MEDIA_TAG);
+    const audioContext = document.querySelector(this.mediaTag);
 
     if (audioContext.setSinkId) {
       audioContext.setSinkId(value);
